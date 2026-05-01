@@ -1,13 +1,9 @@
-mod bf;
-
 use brain_fucker::run_interpreter;
 use clap::Parser;
 use std::{
     fs::File,
     io::{BufReader, Read},
 };
-
-use crate::bf::{executor::Executor, interpreter::Interpreter};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

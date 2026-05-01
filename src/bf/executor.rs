@@ -46,8 +46,12 @@ impl<R: Read, W: Write> Executor<R, W> {
     }
 
     pub fn read_byte(&mut self) -> std::io::Result<()> {
-        self.reader
-            .read_exact(&mut self.data[self.data_ptr..(self.data_ptr + 1)])?;
+        let n = self
+            .reader
+            .read(&mut self.data[self.data_ptr..self.data_ptr + 1])?;
+        if n == 0 {
+            self.data[self.data_ptr] = u8::MAX; // EOF
+        }
         Ok(())
     }
 
@@ -55,7 +59,7 @@ impl<R: Read, W: Write> Executor<R, W> {
         self.data[self.data_ptr]
     }
 
-    pub fn print_byte(&mut self) -> std::io::Result<()> {
+    pub fn write_byte(&mut self) -> std::io::Result<()> {
         self.writer
             .write_all(&self.data[self.data_ptr..self.data_ptr + 1])?;
         // self.writer.flush()?;

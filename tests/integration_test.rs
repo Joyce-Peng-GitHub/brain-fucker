@@ -16,8 +16,9 @@ fn test_bf_interpreter_outputs() {
         // Create an empty Vec to capture output in memory instead of writing to a file
         let mut output_data = Vec::new();
 
-        run_interpreter(code, input_data.as_slice(), &mut output_data)
-            .unwrap_or_else(|_| panic!("Test case {} failed to execute", i));
+        if let Err(err) = run_interpreter(code, input_data.as_slice(), &mut output_data) {
+            panic!("Test case {} failed to execute: {}", i, err);
+        }
 
         let actual_out = String::from_utf8_lossy(&output_data).replace("\r\n", "\n");
         let expected_ans = fs::read_to_string(&ans_path).unwrap().replace("\r\n", "\n");

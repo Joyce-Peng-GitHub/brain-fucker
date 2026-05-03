@@ -3,7 +3,7 @@ use std::fs;
 use brain_fucker::run_interpreter;
 
 #[test]
-fn test_bf_interpreter_outputs() {
+fn test_bf_interpreter_outputs() -> Result<(), Box<dyn std::error::Error>> {
     for i in 1..=7 {
         let bf_path = format!("tests/data/{}.bf", i);
         let in_path = format!("tests/data/{}.in", i);
@@ -16,9 +16,8 @@ fn test_bf_interpreter_outputs() {
         // Create an empty Vec to capture output in memory instead of writing to a file
         let mut output_data = Vec::new();
 
-        if let Err(err) = run_interpreter(code, input_data.as_slice(), &mut output_data) {
-            panic!("Test case {} failed to execute: {}", i, err);
-        }
+        println!("Running test case {}...", i);
+        run_interpreter(code, input_data.as_slice(), &mut output_data)?;
 
         let actual_out = String::from_utf8_lossy(&output_data).replace("\r\n", "\n");
         let expected_ans = fs::read_to_string(&ans_path).unwrap().replace("\r\n", "\n");
@@ -32,4 +31,6 @@ fn test_bf_interpreter_outputs() {
 
         println!("Test case {} passed!", i);
     }
+
+    Ok(())
 }

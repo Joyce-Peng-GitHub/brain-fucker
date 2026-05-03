@@ -61,4 +61,20 @@ impl<R: Read, W: Write> Executor<R, W> {
         // self.writer.flush()?;
         Ok(())
     }
+
+    pub fn clear_byte(&mut self) {
+        self.data[self.data_ptr] = 0;
+    }
+
+    pub fn find_zero_byte(&mut self, step: isize) -> Result<(), String> {
+        if step == 0 {
+            return Err("Step cannot be zero".to_string());
+        }
+
+        while self.cur_byte() != 0 {
+            self.move_data_ptr(step)?;
+        }
+
+        Ok(())
+    }
 }

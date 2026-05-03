@@ -41,10 +41,6 @@ impl<R: Read, W: Write> Executor<R, W> {
         self.data[self.data_ptr] = self.data[self.data_ptr].wrapping_add(diff);
     }
 
-    pub fn sub_cur_byte(&mut self, diff: u8) {
-        self.data[self.data_ptr] = self.data[self.data_ptr].wrapping_sub(diff);
-    }
-
     pub fn read_byte(&mut self) -> std::io::Result<()> {
         let n = self
             .reader

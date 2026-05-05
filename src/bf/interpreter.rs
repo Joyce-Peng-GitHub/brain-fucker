@@ -6,16 +6,18 @@ use std::{
 use crate::bf::executor::Executor;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum BfInstr {
+enum Instr {
     MoveDataPtr(isize),
     WrappingAddCurByte(u8),
     WriteByte,
     ReadByte,
     JmpFwd(usize),
     JmpBwd(usize),
+    SetByte(u8),
+    FindZeroByte(isize), // step
 }
 
-impl BfInstr {
+impl Instr {
     const INC_DATA_PTR: u8 = b'>';
     const DEC_DATA_PTR: u8 = b'<';
     const INC_CUR_BYTE: u8 = b'+';
@@ -42,72 +44,109 @@ impl BfInstr {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum ExtInstr {
-    MoveDataPtr(isize),
-    WrappingAddCurByte(u8),
-    WriteByte,
-    ReadByte,
-    JmpFwd(usize),
-    JmpBwd(usize),
-    ClearByte,
-    FindZeroByte(isize), // step
-}
-
-impl ExtInstr {
-    const JMP_POS_PLACEHOLDER: usize = BfInstr::JMP_POS_PLACEHOLDER;
-
-    fn from_bf_instr(instr: &BfInstr) -> Self {
-        match instr {
-            &BfInstr::MoveDataPtr(offset) => Self::MoveDataPtr(offset),
-            &BfInstr::WrappingAddCurByte(diff) => Self::WrappingAddCurByte(diff),
-            &BfInstr::WriteByte => Self::WriteByte,
-            &BfInstr::ReadByte => Self::ReadByte,
-            &BfInstr::JmpFwd(pos) => Self::JmpFwd(pos),
-            &BfInstr::JmpBwd(pos) => Self::JmpBwd(pos),
-        }
-    }
-}
-
 pub struct Interpreter<R, W> {
     executor: Executor<R, W>,
-    instructions: Vec<ExtInstr>,
+    instrs: Vec<Instr>,
     instr_ptr: usize,
 }
 
 impl<R: Read, W: Write> Interpreter<R, W> {
-    fn compress_codes(codes: &Vec<u8>) -> Result<Vec<BfInstr>, String> {
-        let mut instructions = Vec::<BfInstr>::with_capacity(codes.len());
+    fn replace_set_byte_idiom(instrs: &mut Vec<Instr>) -> bool {
+        if instrs.len() < 2 {
+            return false;
+        }
+        if let (&Instr::SetByte(val), &Instr::WrappingAddCurByte(diff)) =
+            (&instrs[instrs.len() - 2], &instrs[instrs.len() - 1])
+        {
+            instrs.pop();
+            *instrs.last_mut().unwrap() = Instr::SetByte(u8::wrapping_add(val, diff));
+            return true;
+        }
+
+        if instrs.len() < 3 {
+            return false;
+        }
+        if matches!(
+            (
+                &instrs[instrs.len() - 3],
+                &instrs[instrs.len() - 2],
+                &instrs[instrs.len() - 1]
+            ),
+            (
+                Instr::JmpFwd(_),
+                Instr::WrappingAddCurByte(1) | Instr::WrappingAddCurByte(u8::MAX),
+                Instr::JmpBwd(_)
+            )
+        ) {
+            instrs.pop();
+            instrs.pop();
+            *instrs.last_mut().unwrap() = Instr::SetByte(0);
+            return true;
+        }
+        return false;
+    }
+    fn replace_find_zero_byte_idiom(instrs: &mut Vec<Instr>) -> bool {
+        if instrs.len() < 3 {
+            return false;
+        }
+
+        if matches!(
+            (
+                &instrs[instrs.len() - 3],
+                &instrs[instrs.len() - 2],
+                &instrs[instrs.len() - 1]
+            ),
+            (Instr::JmpFwd(_), Instr::MoveDataPtr(_), Instr::JmpBwd(_))
+        ) {
+            instrs.pop();
+
+            let offset = if let Instr::MoveDataPtr(offset) = instrs.pop().unwrap() {
+                offset
+            } else {
+                unreachable!();
+            };
+            debug_assert_ne!(offset, 0);
+
+            *instrs.last_mut().unwrap() = Instr::FindZeroByte(offset);
+            return true;
+        }
+
+        return false;
+    }
+
+    fn replace_idioms(instrs: &mut Vec<Instr>) -> bool {
+        return Self::replace_set_byte_idiom(instrs)
+            || Self::replace_find_zero_byte_idiom(instrs);
+    }
+
+    fn parse_codes(codes: &Vec<u8>) -> Result<Vec<Instr>, String> {
+        let mut instrs = Vec::<Instr>::with_capacity(codes.len());
 
         for &b in codes.iter() {
-            if let Some(instr) = BfInstr::from_byte(b) {
-                if instructions.is_empty()
+            if let Some(instr) = Instr::from_byte(b) {
+                if instrs.is_empty()
                     || matches!(
                         instr,
-                        BfInstr::WriteByte
-                            | BfInstr::ReadByte
-                            | BfInstr::JmpFwd(_)
-                            | BfInstr::JmpBwd(_)
+                        Instr::ReadByte | Instr::WriteByte | Instr::JmpFwd(_) | Instr::JmpBwd(_)
                     )
-                    || std::mem::discriminant(instructions.last().unwrap())
+                    || std::mem::discriminant(instrs.last().unwrap())
                         != std::mem::discriminant(&instr)
                 {
-                    instructions.push(instr);
+                    while Self::replace_idioms(&mut instrs) {}
+                    instrs.push(instr);
                     continue;
                 }
 
                 match instr {
-                    BfInstr::MoveDataPtr(offset) => {
-                        if let BfInstr::MoveDataPtr(cur_offset) = instructions.last_mut().unwrap() {
+                    Instr::MoveDataPtr(offset) => {
+                        if let Instr::MoveDataPtr(cur_offset) = instrs.last_mut().unwrap() {
                             *cur_offset += offset;
                         } else {
                             unreachable!(); // The `if` condition above guarantees this won't happen
                         }
                     }
-                    BfInstr::WrappingAddCurByte(diff) => {
-                        if let BfInstr::WrappingAddCurByte(cur_diff) =
-                            instructions.last_mut().unwrap()
-                        {
+                    Instr::WrappingAddCurByte(diff) => {
+                        if let Instr::WrappingAddCurByte(cur_diff) = instrs.last_mut().unwrap() {
                             *cur_diff = cur_diff.wrapping_add(diff);
                         } else {
                             unreachable!(); // The `if` condition above guarantees this won't happen
@@ -118,79 +157,30 @@ impl<R: Read, W: Write> Interpreter<R, W> {
             }
         }
 
-        Ok(instructions)
-    }
-
-    fn idiom_recognize(instrs: &Vec<BfInstr>) -> Vec<ExtInstr> {
-        let mut ext_instrs = Vec::<ExtInstr>::with_capacity(instrs.len());
-
-        let mut i = 0;
-        while i < instrs.len() {
-            if i + 2 < instrs.len() {
-                // Recognize "[-]" and "[+]" as ClearByte
-                if let (
-                    &BfInstr::JmpFwd(fwd_pos),
-                    &BfInstr::WrappingAddCurByte(diff),
-                    &BfInstr::JmpBwd(bwd_pos),
-                ) = (&instrs[i], &instrs[i + 1], &instrs[i + 2])
-                {
-                    debug_assert_eq!(fwd_pos, BfInstr::JMP_POS_PLACEHOLDER);
-                    debug_assert_eq!(bwd_pos, BfInstr::JMP_POS_PLACEHOLDER);
-
-                    if diff == 1 || diff == u8::MAX {
-                        ext_instrs.push(ExtInstr::ClearByte);
-                        i += 3;
-                        continue;
-                    }
-                }
-
-                // Recognize "[>]" and "[<]" as FindZeroByte
-                if let (
-                    &BfInstr::JmpFwd(fwd_pos),
-                    &BfInstr::MoveDataPtr(offset),
-                    &BfInstr::JmpBwd(bwd_pos),
-                ) = (&instrs[i], &instrs[i + 1], &instrs[i + 2])
-                {
-                    debug_assert_eq!(fwd_pos, BfInstr::JMP_POS_PLACEHOLDER);
-                    debug_assert_eq!(bwd_pos, BfInstr::JMP_POS_PLACEHOLDER);
-
-                    ext_instrs.push(ExtInstr::FindZeroByte(offset));
-                    i += 3;
-                    continue;
-                }
-            }
-
-            ext_instrs.push(ExtInstr::from_bf_instr(&instrs[i]));
-            i += 1;
-        }
-
-        ext_instrs
+        Ok(instrs)
     }
 
     fn process_jmps(&mut self) -> Result<(), String> {
-        let mut stk = Vec::<usize>::with_capacity(self.instructions.len());
-        let len = self.instructions.len();
+        let mut stk = Vec::<usize>::with_capacity(self.instrs.len());
+        let len = self.instrs.len();
         for i in 0..len {
-            match self.instructions[i] {
-                ExtInstr::JmpFwd(pos) => {
-                    debug_assert_eq!(pos, ExtInstr::JMP_POS_PLACEHOLDER);
+            match self.instrs[i] {
+                Instr::JmpFwd(pos) => {
+                    debug_assert_eq!(pos, Instr::JMP_POS_PLACEHOLDER);
 
                     stk.push(i);
                 }
-                ExtInstr::JmpBwd(pos) => {
-                    debug_assert_eq!(pos, ExtInstr::JMP_POS_PLACEHOLDER);
+                Instr::JmpBwd(pos) => {
+                    debug_assert_eq!(pos, Instr::JMP_POS_PLACEHOLDER);
 
                     if let Some(open_pos) = stk.pop() {
                         let close_pos = i;
-                        if let ExtInstr::JmpFwd(ref mut open_match_pos) =
-                            self.instructions[open_pos]
-                        {
+                        if let Instr::JmpFwd(ref mut open_match_pos) = self.instrs[open_pos] {
                             *open_match_pos = close_pos;
                         } else {
                             unreachable!();
                         }
-                        if let ExtInstr::JmpBwd(ref mut close_match_pos) =
-                            self.instructions[close_pos]
+                        if let Instr::JmpBwd(ref mut close_match_pos) = self.instrs[close_pos]
                         {
                             *close_match_pos = open_pos;
                         } else {
@@ -217,7 +207,7 @@ impl<R: Read, W: Write> Interpreter<R, W> {
     pub fn try_new(executor: Executor<R, W>, codes: Vec<u8>) -> Result<Self, String> {
         let mut interpreter = Interpreter {
             executor: executor,
-            instructions: Self::idiom_recognize(&Self::compress_codes(&codes)?),
+            instrs: Self::parse_codes(&codes)?,
             instr_ptr: 0,
         };
         interpreter.process_jmps()?;
@@ -225,32 +215,32 @@ impl<R: Read, W: Write> Interpreter<R, W> {
     }
 
     pub fn exec_once(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.instr_ptr >= self.instructions.len() {
+        if self.instr_ptr >= self.instrs.len() {
             return Err(format!(
                 "Instruction pointer out of bounds: {} >= {}",
                 self.instr_ptr,
-                self.instructions.len()
+                self.instrs.len()
             )
             .into());
         }
 
-        match self.instructions[self.instr_ptr] {
-            ExtInstr::MoveDataPtr(offset) => self.executor.move_data_ptr(offset)?,
-            ExtInstr::WrappingAddCurByte(diff) => self.executor.add_cur_byte(diff),
-            ExtInstr::WriteByte => self.executor.write_byte()?,
-            ExtInstr::ReadByte => self.executor.read_byte()?,
-            ExtInstr::JmpFwd(pos) => {
+        match self.instrs[self.instr_ptr] {
+            Instr::MoveDataPtr(offset) => self.executor.move_data_ptr(offset)?,
+            Instr::WrappingAddCurByte(diff) => self.executor.add_cur_byte(diff),
+            Instr::WriteByte => self.executor.write_byte()?,
+            Instr::ReadByte => self.executor.read_byte()?,
+            Instr::JmpFwd(pos) => {
                 if self.executor.cur_byte() == 0 {
                     self.instr_ptr = pos;
                 }
             }
-            ExtInstr::JmpBwd(pos) => {
+            Instr::JmpBwd(pos) => {
                 if self.executor.cur_byte() != 0 {
                     self.instr_ptr = pos;
                 }
             }
-            ExtInstr::ClearByte => self.executor.clear_byte(),
-            ExtInstr::FindZeroByte(step) => self.executor.find_zero_byte(step)?,
+            Instr::SetByte(val) => self.executor.set_byte(val),
+            Instr::FindZeroByte(step) => self.executor.find_zero_byte(step)?,
         }
 
         self.instr_ptr += 1;
@@ -258,7 +248,7 @@ impl<R: Read, W: Write> Interpreter<R, W> {
     }
 
     pub fn exec(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        while self.instr_ptr < self.instructions.len() {
+        while self.instr_ptr < self.instrs.len() {
             self.exec_once()?;
         }
         Ok(())

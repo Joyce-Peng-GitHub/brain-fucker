@@ -62,8 +62,8 @@ impl<R: Read, W: Write> Executor<R, W> {
         Ok(())
     }
 
-    pub fn clear_byte(&mut self) {
-        self.data[self.data_ptr] = 0;
+    pub fn set_byte(&mut self, val: u8) {
+        self.data[self.data_ptr] = val;
     }
 
     pub fn find_zero_byte(&mut self, step: isize) -> Result<(), String> {

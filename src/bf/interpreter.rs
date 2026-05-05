@@ -1,11 +1,12 @@
 use std::{
+    collections::HashMap,
     io::{Read, Write},
     usize,
 };
 
 use crate::bf::executor::Executor;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Instr {
     MoveDataPtr(isize),
     WrappingAddCurByte(u8),
@@ -14,7 +15,8 @@ enum Instr {
     JmpFwd(usize),
     JmpBwd(usize),
     SetByte(u8),
-    FindZeroByte(isize), // step
+    FindZeroByte(isize),                          // step
+    BatchWrappingAddMul((HashMap<isize, u8>, bool)), // offset -> diff, is_minus
 }
 
 impl Instr {
@@ -113,10 +115,56 @@ impl<R: Read, W: Write> Interpreter<R, W> {
 
         return false;
     }
+    fn replace_batch_wrapping_add_mul_idiom(instrs: &mut Vec<Instr>) -> bool {
+        if instrs.len() < 6 || !matches!(instrs.last(), Some(Instr::JmpBwd(_))) {
+            return false;
+        }
+
+        let mut beg = instrs.len() - 2;
+        loop {
+            match instrs[beg] {
+                Instr::MoveDataPtr(_) | Instr::WrappingAddCurByte(_) => {}
+                Instr::JmpFwd(_) => break,
+                _ => return false,
+            }
+            if beg == 0 {
+                return false;
+            }
+            beg -= 1;
+        }
+
+        let mut offset_diffs = HashMap::<isize, u8>::new();
+        let mut cur_offset = 0isize;
+        for instr in &instrs[beg + 1..instrs.len() - 1] {
+            match instr {
+                Instr::MoveDataPtr(offset) => cur_offset += offset,
+                Instr::WrappingAddCurByte(diff) => {
+                    let cur_diff = offset_diffs.entry(cur_offset).or_insert(0);
+                    *cur_diff = cur_diff.wrapping_add(*diff);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if cur_offset != 0 {
+            return false;
+        }
+
+        let base_diff = offset_diffs.remove(&0).unwrap_or(0);
+        let is_minus = base_diff == u8::MAX;
+        if !is_minus && base_diff != 1 {
+            return false;
+        }
+
+        instrs.truncate(beg);
+        instrs.push(Instr::BatchWrappingAddMul((offset_diffs, is_minus)));
+        return true;
+    }
 
     fn replace_idioms(instrs: &mut Vec<Instr>) -> bool {
         return Self::replace_set_byte_idiom(instrs)
-            || Self::replace_find_zero_byte_idiom(instrs);
+            || Self::replace_find_zero_byte_idiom(instrs)
+            || Self::replace_batch_wrapping_add_mul_idiom(instrs);
     }
 
     fn parse_codes(codes: &Vec<u8>) -> Result<Vec<Instr>, String> {
@@ -180,8 +228,7 @@ impl<R: Read, W: Write> Interpreter<R, W> {
                         } else {
                             unreachable!();
                         }
-                        if let Instr::JmpBwd(ref mut close_match_pos) = self.instrs[close_pos]
-                        {
+                        if let Instr::JmpBwd(ref mut close_match_pos) = self.instrs[close_pos] {
                             *close_match_pos = open_pos;
                         } else {
                             unreachable!();
@@ -224,23 +271,26 @@ impl<R: Read, W: Write> Interpreter<R, W> {
             .into());
         }
 
-        match self.instrs[self.instr_ptr] {
-            Instr::MoveDataPtr(offset) => self.executor.move_data_ptr(offset)?,
-            Instr::WrappingAddCurByte(diff) => self.executor.add_cur_byte(diff),
-            Instr::WriteByte => self.executor.write_byte()?,
-            Instr::ReadByte => self.executor.read_byte()?,
-            Instr::JmpFwd(pos) => {
+        match &self.instrs[self.instr_ptr] {
+            &Instr::MoveDataPtr(offset) => self.executor.move_data_ptr(offset)?,
+            &Instr::WrappingAddCurByte(diff) => self.executor.wrapping_add_cur_byte(diff),
+            &Instr::WriteByte => self.executor.write_byte()?,
+            &Instr::ReadByte => self.executor.read_byte()?,
+            &Instr::JmpFwd(pos) => {
                 if self.executor.cur_byte() == 0 {
                     self.instr_ptr = pos;
                 }
             }
-            Instr::JmpBwd(pos) => {
+            &Instr::JmpBwd(pos) => {
                 if self.executor.cur_byte() != 0 {
                     self.instr_ptr = pos;
                 }
             }
-            Instr::SetByte(val) => self.executor.set_byte(val),
-            Instr::FindZeroByte(step) => self.executor.find_zero_byte(step)?,
+            &Instr::SetByte(val) => self.executor.set_byte(val),
+            &Instr::FindZeroByte(step) => self.executor.find_zero_byte(step)?,
+            &Instr::BatchWrappingAddMul((ref offset_diffs, is_minus)) => {
+                self.executor.batch_wrapping_add_mul(offset_diffs, is_minus)?
+            }
         }
 
         self.instr_ptr += 1;

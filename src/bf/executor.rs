@@ -1,4 +1,7 @@
-use std::io::{BufReader, Read, Write};
+use std::{
+    collections::HashMap,
+    io::{BufReader, Read, Write},
+};
 
 pub struct Executor<R, W> {
     data: Vec<u8>,
@@ -20,7 +23,7 @@ impl<R: Read, W: Write> Executor<R, W> {
     }
 
     pub fn new(input: R, writer: W) -> Self {
-        Self::with_capacity(input, writer, Self::DEFAULT_CAPACITY)
+        Self::with_capacity(input, writer, Self::DEFAULT_CAPACITY.max(1))
     }
 
     pub fn move_data_ptr(&mut self, offset: isize) -> Result<(), String> {
@@ -37,7 +40,7 @@ impl<R: Read, W: Write> Executor<R, W> {
         Ok(())
     }
 
-    pub fn add_cur_byte(&mut self, diff: u8) {
+    pub fn wrapping_add_cur_byte(&mut self, diff: u8) {
         self.data[self.data_ptr] = self.data[self.data_ptr].wrapping_add(diff);
     }
 
@@ -73,8 +76,42 @@ impl<R: Read, W: Write> Executor<R, W> {
 
         while self.cur_byte() != 0 {
             self.move_data_ptr(step)?;
+            if self.data_ptr >= self.data.len() {
+                self.data.resize(self.data_ptr + 1, 0);
+                break;
+            }
         }
 
+        Ok(())
+    }
+
+    pub fn batch_wrapping_add_mul(
+        &mut self,
+        offset_diffs: &HashMap<isize, u8>,
+        is_minus: bool,
+    ) -> Result<(), String> {
+        let mul = if is_minus {
+            self.cur_byte()
+        } else {
+            self.cur_byte().wrapping_neg()
+        };
+        if mul == 0 {
+            return Ok(());
+        }
+        self.set_byte(0);
+        for (offset, diff) in offset_diffs {
+            if self.data_ptr as isize + offset < 0 {
+                return Err(format!(
+                    "Pointer underflow: cannot move pointer to negative index (current: {}, offset: {})",
+                    self.data_ptr, offset
+                ));
+            }
+            let target_ptr = (self.data_ptr as isize + offset) as usize;
+            if target_ptr >= self.data.len() {
+                self.data.resize(target_ptr + 1, 0);
+            }
+            self.data[target_ptr] = self.data[target_ptr].wrapping_add(diff.wrapping_mul(mul));
+        }
         Ok(())
     }
 }

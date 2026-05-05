@@ -18,13 +18,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reader = BufReader::new(file);
     let code = reader
         .bytes()
-        .filter(|b_res| {
-            if let Ok(b) = b_res {
-                !b.is_ascii_whitespace()
-            } else {
-                return false;
-            }
-        })
         .collect::<Result<Vec<u8>, std::io::Error>>()?;
 
     run_interpreter(code, std::io::stdin(), std::io::stdout())?;

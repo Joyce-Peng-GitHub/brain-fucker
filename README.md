@@ -8,17 +8,19 @@ Language: [English](README.md), [简体中文](README.zh-CN.md).
 
 ## Prerequisites
 
-The build process requires the [Rust toolchain](https://rust-lang.org/tools/install/).
+The build process requires the [Rust toolchain](https://rust-lang.org/tools/install/). For static compilation on Linux, the operating system must have the `musl` toolchain installed, and the corresponding standard library must be downloaded via `rustup`.
+
+This project provides executable files compatible with **any Linux distribution running on x86_64 / AMD64 hardware architecture**.
 
 ## Build and Run
 
-Execute the following in the project root directory:
+Execute the following in the project root directory
 ```bash
 cargo build
 ```
-You can add the `--release` flag to build the project in release mode.
+to build the project. You can add the `--release` flag to build the project in release mode. Furthermore, add the `--target x86_64-unknown-linux-musl` flag (or the specific target corresponding to your environment) for a static build.
 
-Usage
+Usage:
 ```bash
 $ ./bf-interpreter --help
 Usage: bf-interpreter <FILENAME>

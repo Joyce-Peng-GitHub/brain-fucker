@@ -8,17 +8,19 @@
 
 ## 环境要求
 
-构建过程需要 [Rust 工具链](https://rust-lang.org/tools/install/)。
+构建过程需要 [Rust 工具链](https://rust-lang.org/tools/install/)。在 Linux 下进行静态编译需要操作系统安装 `musl` 工具链并用 `rustup` 下载相应环境的标准库。
 
-## 编译和运行
+本项目提供兼容**硬件架构为 x86_64 / AMD64 的任意 Linux 发行版**的可执行文件。
+
+## 构建和运行
 
 在项目根目录下执行
 ```bash
 cargo build
 ```
-可以加上 `--release` 参数以使用发布模式构建项目。
+即可构建项目。可以加上 `--release` 参数以使用发布模式构建项目；进一步地，可以加上 `--target x86_64-unknown-linux-musl` 参数（具体参数取决于编译环境）进行静态构建。
 
-用法
+用法：
 ```bash
 $ ./bf-interpreter --help
 Usage: bf-interpreter <FILENAME>
